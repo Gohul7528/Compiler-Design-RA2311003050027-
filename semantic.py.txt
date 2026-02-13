@@ -1,0 +1,183 @@
+import re
+
+class Token:
+    def __init__(self, type_, value):
+        self.type = type_
+        self.value = value
+
+    def __repr__(self):
+        return f"{self.type}:{self.value}"
+TOKEN_SPECIFICATION = [
+    ("KEYWORD",   r"\bint\b"),
+    ("NUMBER",    r"\b\d+\b"),
+    ("IDENTIFIER",r"\b[a-zA-Z_]\w*\b"),
+    ("PLUS",      r"\+"),
+    ("MINUS",     r"-"),
+    ("MUL",       r"\*"),
+    ("DIV",       r"/"),
+    ("ASSIGN",    r"="),
+    ("LPAREN",    r"\("),
+    ("RPAREN",    r"\)"),
+    ("SEMICOLON", r";"),
+    ("SKIP",      r"[ \t\n]+"),
+    ("MISMATCH",  r"."),
+]
+
+def lexer(code):
+    tokens = []
+    tok_regex = "|".join(f"(?P<{name}>{pattern})" for name, pattern in TOKEN_SPECIFICATION)
+    for match in re.finditer(tok_regex, code):
+        kind = match.lastgroup
+        value = match.group()
+        if kind == "SKIP":
+            continue
+        elif kind == "MISMATCH":
+            raise SyntaxError(f"Unexpected character: {value}")
+        else:
+            tokens.append(Token(kind, value))
+    return tokens
+
+class Program(ASTNode):
+    def __init__(self, statements): self.statements = statements
+    def __repr__(self): return f"Program({self.statements})"
+
+class VarDeclaration(ASTNode):
+    def __init__(self, var_type, identifier, expression):
+        self.var_type = var_type
+        self.identifier = identifier
+        self.expression = expression
+    def __repr__(self):
+        return f"VarDecl({self.var_type} {self.identifier} = {self.expression})"
+
+class BinaryOperation(ASTNode):
+    def __init__(self, left, operator, right):
+        self.left = left
+        self.operator = operator
+        self.right = right
+    def __repr__(self):
+        return f"({self.left} {self.operator} {self.right})"
+
+class Number(ASTNode):
+    def __init__(self, value): self.value = value
+    def __repr__(self): return self.value
+
+class Identifier(ASTNode):
+    def __init__(self, name): self.name = name
+    def __repr__(self): return self.name
+
+class Parser:
+    def __init__(self, tokens):
+        self.tokens = tokens; self.pos = 0
+        self.current_token = self.tokens[self.pos] if tokens else None
+
+    def advance(self):
+        self.pos += 1
+        if self.pos < len(self.tokens): self.current_token = self.tokens[self.pos]
+        else: self.current_token = None
+
+    def eat(self, token_type):
+        if self.current_token and self.current_token.type == token_type: self.advance()
+        else: raise SyntaxError(f"Expected {token_type}, got {self.current_token}")
+
+    def parse(self):
+        statements = []
+        while self.current_token:
+            statements.append(self.statement())
+        return Program(statements)
+
+    def statement(self):
+        var_type = self.current_token.value
+        self.eat("KEYWORD")
+        identifier = self.current_token.value
+        self.eat("IDENTIFIER")
+        self.eat("ASSIGN")
+        expr = self.expression()
+        self.eat("SEMICOLON")
+        return VarDeclaration(var_type, identifier, expr)
+
+    def expression(self):
+        node = self.term()
+        while self.current_token and self.current_token.type in ("PLUS", "MINUS"):
+            operator = self.current_token.value
+            if self.current_token.type == "PLUS": self.eat("PLUS")
+            else: self.eat("MINUS")
+            node = BinaryOperation(node, operator, self.term())
+        return node
+
+    def term(self):
+        node = self.factor()
+        while self.current_token and self.current_token.type in ("MUL", "DIV"):
+            operator = self.current_token.value
+            if self.current_token.type == "MUL": self.eat("MUL")
+            else: self.eat("DIV")
+            node = BinaryOperation(node, operator, self.factor())
+        return node
+
+    def factor(self):
+        token = self.current_token
+        if token.type == "NUMBER": self.eat("NUMBER"); return Number(token.value)
+        elif token.type == "IDENTIFIER": self.eat("IDENTIFIER"); return Identifier(token.value)
+        elif token.type == "LPAREN":
+            self.eat("LPAREN")
+            node = self.expression()
+            self.eat("RPAREN")
+            return node
+        else: raise SyntaxError(f"Unexpected token: {token}")
+
+class SemanticAnalyzer:
+    def __init__(self): self.symbol_table = {}
+
+    def analyze(self, ast):
+        for stmt in ast.statements:
+            if isinstance(stmt, VarDeclaration):
+                var_name = stmt.identifier
+                var_type = stmt.var_type
+                # Duplicate declaration
+                if var_name in self.symbol_table:
+                    print(f"Semantic Error: Variable '{var_name}' already declared.")
+                else:
+                    self.symbol_table[var_name] = var_type
+                self.check_expression(stmt.expression)
+        print("\nSymbol Table:")
+        for name, type_ in self.symbol_table.items():
+            print(f"{name} : {type_}")
+
+    def check_expression(self, expr):
+        if isinstance(expr, Number): return
+        elif isinstance(expr, Identifier):
+            if expr.name not in self.symbol_table:
+                print(f"Semantic Error: Variable '{expr.name}' used before declaration.")
+        elif isinstance(expr, BinaryOperation):
+            self.check_expression(expr.left)
+            self.check_expression(expr.right)
+def main():
+    print("Enter your program (finish with empty line):")
+    lines = []
+    while True:
+        line = input()
+        if line.strip() == "": break
+        lines.append(line)
+    code = "\n".join(lines)
+
+    try:
+        # Phase 1: Lexer
+        tokens = lexer(code)
+        print("\nTOKENS:")
+        for t in tokens: print(t)
+
+        # Phase 2: Parser
+        parser = Parser(tokens)
+        ast = parser.parse()
+        print("\nParsing Successful!")
+        print("Generated AST:")
+        print(ast)
+
+        # Phase 3: Semantic Analysis
+        semantic = SemanticAnalyzer()
+        semantic.analyze(ast)
+
+    except Exception as e:
+        print("\nError:", e)
+
+if __name__ == "__main__":
+    main()
